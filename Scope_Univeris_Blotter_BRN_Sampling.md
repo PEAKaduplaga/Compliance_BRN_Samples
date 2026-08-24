@@ -101,12 +101,22 @@ Current rule configuration from `Sheet1`:
 - Process the configured transaction-code ranks in ascending order.
 - Select the highest `Gross_Amount` available for the representative, using the next rank only if the higher-priority rank has no candidate.
 
+### New-account sample
+
+- Identify new accounts using `MPS.dbo.PLN.SETUP_DT` within the rolling twelve-month period.
+- Eligibility gate: the branch must have at least 5 qualifying new accounts during the period.
+- Current sample size: 1 new account per representative; this must be configurable.
+- Search the complete transaction set for each qualifying plan so the initial transaction is not excluded by the normal transaction-code filter.
+- Select the initial transaction by earliest `Trade_Date`, with `TRX_SYSID` as the tie-breaker.
+- Select the representative's new-account sample by highest initial `Gross_Amount`.
+- Return the initial transaction type, amount, product, and transaction date with the selected sample.
+
 ### Modular implementation design
 
 The procedure should separate the following layers:
 
 1. `Population` — the existing transaction query filtered by BRN and rolling date range.
-2. `RuleConfig` — inline or temporary configuration rows containing sample type, rank, transaction-code set, risk-code set, plan-code set, amount threshold, age threshold, supervision flag, and required sample count.
+2. `RuleConfig` — inline or temporary configuration rows containing sample type, rank, transaction-code set, risk-code set, plan-code set, amount threshold, age threshold, supervision flag, and required sample count. New-account candidates are added as a separate account-based population because their initial transaction must be found outside the normal filtered transaction population.
 3. `CandidateMatches` — evaluates each population transaction against the active rule rows and records the matching rule/rank.
 4. `RankedCandidates` — applies representative-level ordering: rank ascending, `Gross_Amount` descending, then stable transaction-key ordering for ties.
 5. `SelectedSamples` — applies branch eligibility gates and takes the required number per representative, allowing lower-priority ranks to backfill.
@@ -125,6 +135,7 @@ The procedure should not hardcode the number of samples in the selection queries
 | Supervision | 3 |
 | Direct/non-wired | 1 |
 | Senior client | 1 |
+| New account | 1 |
 
 The final procedure may expose these as optional parameters with the documented defaults, or load them from a rule/configuration table. The selection logic must use the configured quantity when applying the representative-level ranking and backfill.
 

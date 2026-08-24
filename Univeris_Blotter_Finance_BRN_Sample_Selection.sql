@@ -30,9 +30,11 @@ BEGIN
     DECLARE @SupervisionSamplesPerRep int = 3;
     DECLARE @DirectSamplesPerRep int = 1;
     DECLARE @SeniorSamplesPerRep int = 1;
+    DECLARE @NewAccountSamplesPerRep int = 1;
     DECLARE @SupervisionMinBranchTrx int = 10;
     DECLARE @DirectMinBranchTrx int = 5;
     DECLARE @SeniorMinBranchTrx int = 5;
+    DECLARE @NewAccountMinBranchAccounts int = 5;
 
     DECLARE @DateTo datetime = GETDATE();
     DECLARE @DateFrom datetime = DATEADD(MONTH, -12, @DateTo);
@@ -171,9 +173,31 @@ where
     T.TRADE_DT >= @DateFrom and T.TRADE_DT < @DateTo
 	and T.BRN_SYSID = @BRN_SYSID
 	  --AND TC.TRX_MNEM_ENG IN ('PUR','RED')--,'XIN','XINK')
-	 AND T.TRX_CD IN (2211, 7211, 4511,4611,6511, 6611, 2260, 2111, 7111, 7312, 7313, 7314, 7315)
+ 	 AND
+    (
+        T.TRX_CD IN (2211, 7211, 4511,4611,6511, 6611, 2260, 2111, 7111, 7312, 7313, 7314, 7315)
+        OR EXISTS
+        (
+            SELECT 1
+            FROM MPS.dbo.PLN PNA
+            WHERE PNA.PLN_SYSID = T.PLN_SYSID
+              AND PNA.SETUP_DT >= @DateFrom
+              AND PNA.SETUP_DT < @DateTo
+        )
+    )
   AND T.TRX_NET IS NOT NULL
-  AND IT.IVT_TYPE <> 'CMA'
+  AND
+  (
+      IT.IVT_TYPE <> 'CMA'
+      OR EXISTS
+      (
+          SELECT 1
+          FROM MPS.dbo.PLN PNA
+          WHERE PNA.PLN_SYSID = T.PLN_SYSID
+            AND PNA.SETUP_DT >= @DateFrom
+            AND PNA.SETUP_DT < @DateTo
+      )
+  )
 	--and I.IVR_SYSID = 39107712
 	--and upper(ltrim(rtrim(I.IVR_RES_CD))) not in ('PQ','QC')
 
@@ -247,7 +271,8 @@ INSERT INTO @SampleConfig (Sample_Type, Samples_Per_Rep, Min_Branch_Trx)
 VALUES
     ('SUPERVISION', @SupervisionSamplesPerRep, @SupervisionMinBranchTrx),
     ('DIRECT',      @DirectSamplesPerRep,      @DirectMinBranchTrx),
-    ('SENIOR',      @SeniorSamplesPerRep,      @SeniorMinBranchTrx);
+    ('SENIOR',      @SeniorSamplesPerRep,      @SeniorMinBranchTrx),
+    ('NEW_ACCOUNT', @NewAccountSamplesPerRep, @NewAccountMinBranchAccounts);
 
 DECLARE @RuleConfig TABLE
 (
@@ -358,6 +383,38 @@ GROUP BY
     T.TRX_SYSID,
     T.Rep_Code;
 
+/*
+    New-account candidates use the complete transaction set for plans opened
+    during the period. One initial transaction is retained per plan.
+*/
+;WITH NewAccountTransactions AS
+(
+    SELECT
+        T.TRX_SYSID,
+        T.Rep_Code,
+        T.Plan_Id,
+        T.Gross_Amount,
+        T.Trade_Date,
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY T.Plan_Id
+            ORDER BY T.Trade_Date ASC, T.TRX_SYSID ASC
+        ) AS Initial_Transaction_Sequence
+    FROM #tmpReport T
+    JOIN MPS.dbo.PLN P
+        ON P.PLN_SYSID = T.Plan_Id
+    WHERE P.SETUP_DT >= @DateFrom
+      AND P.SETUP_DT < @DateTo
+)
+INSERT INTO @CandidateMatches (Sample_Type, TRX_SYSID, Rep_Code, Rule_Rank)
+SELECT
+    'NEW_ACCOUNT',
+    N.TRX_SYSID,
+    N.Rep_Code,
+    1
+FROM NewAccountTransactions N
+WHERE N.Initial_Transaction_Sequence = 1;
+
 /* Branch gates are evaluated independently for each sample type. */
 DECLARE @EligibleSampleTypes TABLE
 (
@@ -459,11 +516,11 @@ SELECT
     T.ADMINISTRATOR_ACCOUNT,
     S.Sample_Type,
     S.Rule_Rank AS Selection_Rank,
-    RC.Rule_Description AS Selection_Rule,
+    COALESCE(RC.Rule_Description, 'New account initial transaction') AS Selection_Rule,
     S.Sample_Sequence
 FROM SelectedSamples S
 JOIN #tmpReport T ON T.TRX_SYSID = S.TRX_SYSID
-JOIN @RuleConfig RC
+LEFT JOIN @RuleConfig RC
     ON RC.Sample_Type = S.Sample_Type
    AND RC.Rule_Rank = S.Rule_Rank
 ORDER BY
