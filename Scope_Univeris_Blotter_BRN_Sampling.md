@@ -58,6 +58,71 @@ Sampling will be implemented as a series of steps. The detailed rules will be ad
 - Reproducibility requirements for each run.
 - Required output fields and sample identifiers.
 
+## 4.1 Confirmed sample-selection rules
+
+The sampling rules are maintained as ordered rule definitions so that thresholds, transaction codes, risk codes, plan codes, and sample counts can be changed without rewriting the selection algorithm.
+
+### Supervision sample
+
+- Eligibility gate: the branch must have at least 10 qualifying transactions during the rolling twelve-month period.
+- Current sample size: 3 transactions per representative; this must be configurable.
+- Rank `1` is the highest priority and rank `6` is the lowest priority.
+- Process candidates by ascending rank.
+- Within each rank, select transactions in descending `Gross_Amount` order.
+- Continue to the next rank only when fewer than 3 transactions have been selected for the representative; lower-ranked transactions backfill the remaining slots.
+
+Current rule configuration from `Sheet1`:
+
+| Rank | Description | Transaction codes | Additional criteria |
+|---:|---|---|---|
+| 1 | Representative under supervision | Any | `TRADE_WATCH = 1` |
+| 2 | Leveraged account | Any | `PLN_CD IN ('41', '18')` |
+| 3 | Redemption | `7211, 7111, 7312, 7313, 7314, 7315` | `Gross_Amount >= 10000` |
+| 4 | Purchase | `2111, 2211` | `Gross_Amount >= 10000` |
+| 5 | Purchase | `2111, 2211` | `IVT_RISK_CD = 30` and `Gross_Amount >= 5000` |
+| 6 | Purchase | `2111, 2211` | `IVT_RISK_CD IN (35, 40, 45, 50, 100)` and `Gross_Amount >= 2500` |
+
+### Direct/non-wired sample
+
+- Eligibility gate: the branch must have at least 5 qualifying direct transactions during the rolling twelve-month period.
+- Current sample size: 1 transaction per representative; this must be configurable.
+- Require `Trade_type = 'D'`.
+- Process the configured transaction-code ranks in ascending order.
+- Select the highest `Gross_Amount` available for the representative, using the next rank only if the higher-priority rank has no candidate.
+
+### Senior-client sample
+
+- Eligibility gate: the branch must have at least 5 qualifying transactions during the rolling twelve-month period.
+- Current sample size: 1 transaction per representative; this must be configurable.
+- Require `AGE >= 70`.
+- Process the configured transaction-code ranks in ascending order.
+- Select the highest `Gross_Amount` available for the representative, using the next rank only if the higher-priority rank has no candidate.
+
+### Modular implementation design
+
+The procedure should separate the following layers:
+
+1. `Population` — the existing transaction query filtered by BRN and rolling date range.
+2. `RuleConfig` — inline or temporary configuration rows containing sample type, rank, transaction-code set, risk-code set, plan-code set, amount threshold, age threshold, supervision flag, and required sample count.
+3. `CandidateMatches` — evaluates each population transaction against the active rule rows and records the matching rule/rank.
+4. `RankedCandidates` — applies representative-level ordering: rank ascending, `Gross_Amount` descending, then stable transaction-key ordering for ties.
+5. `SelectedSamples` — applies branch eligibility gates and takes the required number per representative, allowing lower-priority ranks to backfill.
+6. Final output — returns the selected transactions with sample type, matched rule rank, and selection metadata.
+
+The transaction-key tie-breaker still needs to be confirmed. A stable source transaction identifier should be used instead of relying on non-deterministic ordering when two transactions have the same gross amount.
+
+### Configurable sample quantities
+
+The procedure should not hardcode the number of samples in the selection queries. Instead, sample quantities should be held in configuration values, for example:
+
+| Sample type | Current quantity per representative |
+|---|---:|
+| Supervision | 3 |
+| Direct/non-wired | 1 |
+| Senior client | 1 |
+
+The final procedure may expose these as optional parameters with the documented defaults, or load them from a rule/configuration table. The selection logic must use the configured quantity when applying the representative-level ranking and backfill.
+
 ## 5. Expected procedure behavior
 
 - Accept a BRN as an input parameter.
@@ -79,4 +144,3 @@ Sampling will be implemented as a series of steps. The detailed rules will be ad
 | Date | Change |
 |---|---|
 | 2026-08-21 | Initial scope created from the existing Univeris blotter query. |
-
