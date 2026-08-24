@@ -14,7 +14,10 @@ The starting point is [`Univeris_Blotter_Finance_BRN.sql`](./Univeris_Blotter_Fi
 
 ### Input
 
-- `@BRN` — branch number/code used to restrict the transaction population.
+- `@BRN` — `BRN_CD` supplied by the caller.
+- The procedure resolves `@BRN` to `@BRN_SYSID` through `MPS.dbo.BRN` and uses the resolved key for transaction filtering.
+- An invalid or unknown `BRN_CD` should stop the procedure with an explicit error.
+- Selected samples include the retained branch metadata: `BRN_CD`, `BRN_NAME`, `BRN_STATUS`, `BRN_MGR`, and `DLR_CD`.
 
 ### Date range
 
@@ -109,6 +112,8 @@ The procedure should separate the following layers:
 5. `SelectedSamples` — applies branch eligibility gates and takes the required number per representative, allowing lower-priority ranks to backfill.
 6. Final output — returns the selected transactions with sample type, matched rule rank, and selection metadata.
 
+The final result excludes `PLN_CD`, `TRX_CD`, `BRN_SYSID`, `BRN_TYPE`, `BRN_HEAD`, `BRN_HEAD_CODE`, `BRN_MGR_CODE`, `RGN_CD`, `Dealer_Commission`, `DSC`, `TRX_COMM`, `TRX_COMM_PCNT`, and `ENTRY_USER`. Fields required internally for rule matching remain in the working population.
+
 The transaction-key tie-breaker still needs to be confirmed. A stable source transaction identifier should be used instead of relying on non-deterministic ordering when two transactions have the same gross amount.
 
 ### Configurable sample quantities
@@ -133,7 +138,7 @@ The final procedure may expose these as optional parameters with the documented 
 
 ## 6. Open decisions
 
-- Confirm the exact BRN column and source table/join where it is available.
+- Confirm the branch display columns to return from `MPS.dbo.BRN` (for example, branch code, name, and status).
 - Confirm whether the twelve-month filter uses `Trade_Date`, `Settlement_Date`, `Entry_Date`, or another date.
 - Confirm whether the current query's date filters should be replaced or supplemented.
 - Confirm the SQL Server version and whether use of `TABLESAMPLE`, `NEWID()`, or another sampling approach is acceptable.
