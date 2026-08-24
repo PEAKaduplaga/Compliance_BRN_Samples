@@ -18,6 +18,7 @@ create table #tmpReport (
 	Plan_Last_Update datetime,
 	Plan_KYC_Last_Update datetime,
     Rep_Name varchar(100),
+	IVD_SYSID int,
     Fund_Code varchar(20),
     Fund_Name varchar(100),
 	Fund_Type varchar(5),
@@ -63,21 +64,21 @@ create table #tmpReport (
 	ADMINISTRATOR_ACCOUNT varchar(30),
 	ENTRY_USER varchar(100)
 )
-go
 
-create index idxClientId on #tmpReport(Client_ID)
-go
 
-create index idxPlanId on #tmpReport(Plan_Id)
-go
+--create index idxClientId on #tmpReport(Client_ID)
+--go
 
-declare @dtDateFrom	varchar(10)
-declare @dtDateTo	varchar(10)
+--create index idxPlanId on #tmpReport(Plan_Id)
+--go
 
-set @dtDateFrom	= '2025-07-31'
-set @dtDateTo	= '2026-08-01'
+DECLARE @DateTo datetime = GETDATE();
+DECLARE @DateFrom datetime = DATEADD(MONTH, -12, @DateTo);
 
-insert into #tmpReport(Client_ID,Client_Name,Client_Status,Client_Setup,Client_Stop,Plan_Id,PLN_CD,Plan_Type,Rep_Code,Rep_Name,[TRADE_WATCH],Trade_type,Fund_Code,Fund_Name,Fund_Type,LOAD_Type,IVT_RISK_CD, Product_Risk,Dealer_Code,Trade_Date,Settlement_Date,Entry_Date,TRX_CD,Transaction_Type,Gross_Amount,Net_Amount,Dealer_Commission,DSC,TRX_COMM,
+--set @dtDateFrom	= '2025-07-31'
+--set @dtDateTo	= '2026-08-01'
+
+insert into #tmpReport(Client_ID,Client_Name,Client_Status,Client_Setup,Client_Stop,Plan_Id,PLN_CD,Plan_Type,Rep_Code,Rep_Name,[TRADE_WATCH],Trade_type,IVD_SYSID,Fund_Code,Fund_Name,Fund_Type,LOAD_Type,IVT_RISK_CD, Product_Risk,Dealer_Code,Trade_Date,Settlement_Date,Entry_Date,TRX_CD,Transaction_Type,Gross_Amount,Net_Amount,Dealer_Commission,DSC,TRX_COMM,
     TRX_COMM_PCNT,AGE,Jurisdiction,Client_DOB,ADMINISTRATOR,ADMINISTRATOR_ACCOUNT,ENTRY_USER)
 select
     T.IVR_SYSID as Client_ID,
@@ -92,6 +93,7 @@ select
     R.REP_FNAME + ' ' + R.REP_LNAME as Rep_Name,
 	R.[TRADE_WATCH],
 	CASE WHEN T.TRX_WO_NUM IS NULL THEN 'D' ELSE 'W' END AS Trade_type,
+	T.IVD_SYSID,
     E.SYMBOL as Fund_Code,
     IT.IVT_NAME_ENG as Fund_Name,
 	IT.IVT_TYPE as Fund_Type,
@@ -127,22 +129,26 @@ from
                     join MPS.dbo.REP R on I.REP_CD=R.REP_CD
 					left join MPS.dbo.SYS_USER_CD U ON T.ENTRY_SYSID=U.USER_SYSID
 					left join MPS.dbo.S_IVT_RISK IR on IR.IVT_RISK_CD=IT.IVT_RISK_CD
-                    JOIN MPS.dbo.S_TRX_CD S ON T.TRX_CD = S.TRX_CD           
+                    --JOIN MPS.dbo.S_TRX_CD S ON T.TRX_CD = S.TRX_CD           
 where
-    T.TRADE_DT between @dtDateFrom and @dtDateTo
+    T.TRADE_DT >= @DateFrom and T.TRADE_DT < @DateTo
 	and T.BRN_SYSID = 58279485
-	  --AND S.TRX_MNEM_ENG IN ('PUR','RED')--,'XIN','XINK')
+	  --AND TC.TRX_MNEM_ENG IN ('PUR','RED')--,'XIN','XINK')
 	 AND T.TRX_CD IN (2211, 7211, 4511,4611,6511, 6611, 2260, 2111, 7111, 7312, 7313, 7314, 7315)
   AND T.TRX_NET IS NOT NULL
   AND IT.IVT_TYPE <> 'CMA'
 	--and I.IVR_SYSID = 39107712
 	--and upper(ltrim(rtrim(I.IVR_RES_CD))) not in ('PQ','QC')
 
+create index idxClientId on #tmpReport(Client_ID)
+
+create index idxPlanId on #tmpReport(Plan_Id)
+
 update A set
 	A.CIFSC_Cat=isnull(AC.CIFSC_LINK,'')
 from
     #tmpReport A
-		join MPS.dbo.IVD B on A.Fund_Code=B.SYMBOL
+		join MPS.dbo.IVD B on A.IVD_SYSID=B.IVD_SYSID
 		join MPS.dbo.IVT C on B.IVT_SYSID=C.IVT_SYSID
 		join MPS.dbo.S_ASSET_CLASS AC on C.ASSET_CLASS=AC.ASSET_CLASS
 
