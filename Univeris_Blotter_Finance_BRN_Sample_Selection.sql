@@ -186,6 +186,18 @@ where
         )
     )
   AND T.TRX_NET IS NOT NULL
+  --AND
+  --(
+  --    IT.IVT_TYPE <> 'CMA'
+  --    OR EXISTS
+  --    (
+  --        SELECT 1
+  --        FROM MPS.dbo.PLN PNA
+  --        WHERE PNA.PLN_SYSID = T.PLN_SYSID
+  --          AND PNA.SETUP_DT >= @DateFrom
+  --          AND PNA.SETUP_DT < @DateTo
+  --    )
+  --)
   AND IT.IVT_TYPE <> 'CMA'
 	--and I.IVR_SYSID = 39107712
 	--and upper(ltrim(rtrim(I.IVR_RES_CD))) not in ('PQ','QC')
