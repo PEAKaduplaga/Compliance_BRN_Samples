@@ -8,15 +8,24 @@ DECLARE @MinBranchChanges int = 5;
 DECLARE @DateTo datetime = GETDATE();
 DECLARE @DateFrom datetime = DATEADD(MONTH, -12, @DateTo);
 DECLARE @BRN_SYSID int;
+DECLARE @BRN_NAME varchar(100);
+DECLARE @BRN_STATUS varchar(2);
+DECLARE @BRN_MGR varchar(100);
+DECLARE @DLR_CD varchar(10);
 
 /* Resolve the supplied branch code to the branch primary key. */
-SELECT @BRN_SYSID = B.BRN_SYSID
-FROM [UVS].[brn] B
+SELECT
+    @BRN_SYSID = B.BRN_SYSID,
+    @BRN_NAME = B.BRN_NAME,
+    @BRN_STATUS = B.BRN_STATUS,
+    @BRN_MGR = B.BRN_MGR,
+    @DLR_CD = B.DLR_CD
+FROM [PEAK_LAKE_BI].[UVS].[brn] B
 WHERE B.BRN_CD = @BRN;
 
 IF @BRN_SYSID IS NULL
 BEGIN
-    THROW 50001, 'The supplied BRN_CD was not found in UVS.brn.', 1;
+    THROW 50001, 'The supplied BRN_CD was not found in MPS.dbo.BRN.', 1;
 END;
 
 /*
@@ -27,6 +36,11 @@ END;
 (
     SELECT
         A.[IVR_SYSID],
+        CASE
+            WHEN ISNULL(B.[IVR_PRIM_SIN], 0) = 0
+                THEN B.[IVR_REG_2]
+            ELSE B.[IVR_PRIM_LNAME] + ', ' + B.[IVR_PRIM_FNAME]
+        END AS Client_Name,
         A.[PLN_SYSID],
         A.[ACT_SYSID],
         A.[USER_SYSID],
@@ -43,10 +57,10 @@ END;
         C.[REP_CD] AS Rep_Code,
         C.[REP_FNAME] + ' ' + C.[REP_LNAME] AS Rep_Name,
         B.[BRN_SYSID]
-    FROM [UVS].[adt] A
-    LEFT JOIN [UVS].[ivr] B
+    FROM [PEAK_LAKE_BI].[UVS].[adt] A
+    LEFT JOIN [PEAK_LAKE_BI].[UVS].[ivr] B
         ON A.IVR_SYSID = B.IVR_SYSID
-    LEFT JOIN [UVS].[rep] C
+    LEFT JOIN [PEAK_LAKE_BI].[UVS].[rep] C
         ON B.REP_SYSID = C.REP_SYSID
     WHERE B.BRN_SYSID = @BRN_SYSID
       AND A.ADT_DATE >= @DateFrom
@@ -126,8 +140,15 @@ END;
     WHERE R.Sample_Sequence <= @SamplesPerRep
 )
 SELECT
-    D.*,
+    @BRN AS BRN_CD,
+    @BRN_NAME AS BRN_NAME,
+    @BRN_STATUS AS BRN_STATUS,
+    @BRN_MGR AS BRN_MGR,
+    @DLR_CD AS DLR_CD,
+    F.Rep_Code,
+    F.Rep_Name,
     F.IVR_SYSID,
+    F.Client_Name,
     F.PLN_SYSID,
     F.ACT_SYSID,
     F.USER_SYSID,
@@ -140,17 +161,14 @@ SELECT
     F.ADT_BEFORE,
     F.ADT_AFTER,
     F.SUSER_NAME,
-    F.REP_SYSID,
-    F.Rep_Code,
-    F.Rep_Name,
+    --F.REP_SYSID,
+
     S.Change_Date,
     'KYC' AS Sample_Type,
     S.Sample_Sequence
 FROM SelectedEvents S
 JOIN FilteredAudit F
     ON F.ADT_SYSID = S.ADT_SYSID
-LEFT JOIN [UVS].[brn] D
-    ON D.BRN_SYSID = S.BRN_SYSID
 ORDER BY
     F.Rep_Code,
     S.Sample_Sequence,
