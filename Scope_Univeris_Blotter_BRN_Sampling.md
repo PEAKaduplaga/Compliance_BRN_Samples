@@ -160,3 +160,48 @@ The final procedure may expose these as optional parameters with the documented 
 | Date | Change |
 |---|---|
 | 2026-08-21 | Initial scope created from the existing Univeris blotter query. |
+
+## 8. KYC sampling (CVC in French)
+
+### Objective
+
+Add a KYC sample population for changes to the client's KYC information (`CVC` in the French version):
+
+- Select 1 CVC change per representative.
+- The branch must have at least 5 qualifying CVC changes during the twelve months preceding the review.
+- The sample is filtered by branch and representative.
+- The procedure should return selected samples only; the full population can be added later if required.
+- Because CVC changes do not have a transaction amount, the current selection order is most recent `ADT_DATE`, then highest `ADT_SYSID` for ties.
+
+### Source
+
+The KYC audit data is located in the Fabric Lake `PEAK_LAKE_BI` Delta tables. The starting query is [`KYC_BRN_SAMPLE.sql`](./KYC_BRN_SAMPLE.sql), which reads the UVS audit data, including `[UVS].[adt]`, `[UVS].[ivr]`, `[UVS].[rep]`, and `[UVS].[brn]`.
+
+### Initial population filters
+
+The KYC population should use the audit event date (`ADT_DATE`) for the rolling twelve-month period and retain only records with a populated `ADT_AFTER` value.
+
+The following audit fields must be excluded from the CVC-change population:
+
+- `USER_SYSID`.
+- Any field containing the literal `_DT`, such as `SETUP_DT` or `LAST_UPD_DT`.
+- Any field containing `DATE`.
+
+The active audit-table scope is maintained in `KYC_BRN_SAMPLE.sql` and currently includes KYC-related tables such as `KYC_PLN`, `PLN`, `IVR`, and related client/plan tables.
+
+### Required output
+
+Each selected KYC sample should include, at minimum:
+
+- Branch code and branch details.
+- Representative identifier and name.
+- Client and plan identifiers.
+- Audit event date.
+- Audit table, activity, and changed field.
+- Before and after values.
+- Transaction/user context where available, excluding `USER_SYSID` as a changed field.
+- A sample type and selection sequence.
+
+### Modular controls
+
+The KYC sample quantity per representative and the minimum qualifying changes per branch should be configurable, consistent with the other sample populations. The default values are 1 sample per representative and 5 qualifying CVC changes per branch. These controls are currently variables at the top of `KYC_BRN_SAMPLE.sql`.
