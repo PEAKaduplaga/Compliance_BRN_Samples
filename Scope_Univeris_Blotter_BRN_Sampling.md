@@ -205,3 +205,175 @@ Each selected KYC sample should include, at minimum:
 ### Modular controls
 
 The KYC sample quantity per representative and the minimum qualifying changes per branch should be configurable, consistent with the other sample populations. The default values are 1 sample per representative and 5 qualifying CVC changes per branch. These controls are currently variables at the top of `KYC_BRN_SAMPLE.sql`.
+
+## 9. Branch hierarchy and transaction population scope
+
+### Branch structure
+
+Branches have a hierarchy based on `BRN_TYPE`:
+
+| `BRN_TYPE` | Meaning | Example behavior |
+|---|---|---|
+| `M` | Main branch | May operate alone or have multiple sub-branches. |
+| `S` | Sub-branch | Belongs to a main branch through the branch-head relationship. |
+| `O` | Office | Separate branch type to be handled according to the configured scope. |
+| `T` | Outlet | Separate branch type to be handled according to the configured scope. |
+| `N` | Multilevel | Separate branch type to be handled according to the configured scope. |
+
+The branch records indicate the relationship using fields such as `BRN_SYSID`, `BRN_CD`, `BRN_TYPE`, `BRN_HEAD_CODE`, and `BRN_MGR_CODE`. For example, sub-branches with `BRN_HEAD_CODE = 'ON010'` belong to the main branch `ON010`.
+
+### Default population behavior
+
+When a main branch is supplied as the starting branch, the default transaction population should include:
+
+1. The main branch itself.
+2. All active sub-branches belonging to that main branch.
+3. The complete combined transaction set for the branch group before applying transaction sampling.
+
+If a main branch has no sub-branches, its own transactions form the complete population.
+
+The branch group should be resolved before transaction filtering and should be reused consistently across all sampling categories. Branch-level minimums and sample counts must be calculated against the configured population scope, not accidentally against only the main branch row.
+
+### Optional branch-scope override
+
+The final procedure should support an override allowing the caller to choose between:
+
+- `GROUP` — main branch plus all related sub-branches; default behavior.
+- `INDIVIDUAL` — only the supplied branch.
+
+The override should be configurable without rewriting the transaction-selection logic. The implementation should also define how the input behaves when a sub-branch is supplied: either sample that sub-branch only, or resolve it to its main branch group unless `INDIVIDUAL` is explicitly selected.
+
+### Branch-code validation and scope resolution
+
+The branch scope should be resolved from `[MPS].[dbo].[BRN]` before the transaction population is queried. The relevant identification fields are:
+
+- `BRN_SYSID` — branch primary key used by transaction foreign keys.
+- `BRN_CD` — caller-facing branch code.
+- `BRN_TYPE` — identifies main, sub-branch, office, outlet, or multilevel branch types.
+- `BRN_HEAD_CODE` — identifies the parent/main branch for a sub-branch.
+- `BRN_STATUS` — used to determine whether the branch is active.
+- `BRN_MGR_CODE` — branch manager identifier for later approval-source classification.
+
+The stored procedure should create a temporary branch-scope table at the beginning of execution, for example `#BranchScope`, with at least:
+
+| Column | Purpose |
+|---|---|
+| `BRN_SYSID` | Join key for transaction data. |
+| `BRN_CD` | Branch code returned for auditability. |
+| `BRN_TYPE` | Main/sub-branch classification. |
+| `BRN_HEAD_CODE` | Parent/main branch relationship. |
+| `BRN_MGR_CODE` | Branch-manager comparison for approval analysis. |
+| `Scope_Source` | Indicates `INPUT`, `MAIN`, or `SUB_BRANCH`. |
+
+Resolution sequence:
+
+1. Find the input row using `BRN_CD`.
+2. Stop with an explicit error if no branch row is found.
+3. If the override is `TRUE`, insert only the supplied branch into `@BranchScope`.
+4. If the override is `FALSE` and the input is a main branch (`BRN_TYPE = 'M'`), insert the main branch plus active rows where `BRN_HEAD_CODE` equals the main branch code.
+5. If the override is `FALSE` and the input is a sub-branch (`BRN_TYPE = 'S'`), resolve its `BRN_HEAD_CODE`, then insert the parent main branch and all active sub-branches under that parent.
+6. Require a valid parent/main branch code when group resolution is requested for a sub-branch; otherwise stop with an explicit error rather than silently sampling only one branch.
+7. Use the resulting `@BranchScope.BRN_SYSID` set for all transaction filtering and branch-level population counts.
+
+User-defined functions and table-valued functions should not be used for the KYC/Fabric Delta workflow because Fabric Delta Lake does not support the required function approach. The temporary `#BranchScope` table is the required implementation pattern. It is local to one procedure execution, supports the runtime override, and carries branch metadata into later approval-source classification.
+
+### Approval-source distinction
+
+The transaction population must preserve enough source information to determine whether an approval was performed by:
+
+- The branch manager or branch-level approver.
+- Head office or another centralized approver.
+
+This distinction must be captured before sampling so that selected transactions can be classified by approval source. The relevant source fields, approval user identifiers, and approval-history table still need to be confirmed. Sampling should not collapse or discard this information when transactions from a main branch and its sub-branches are combined.
+
+### Open decisions
+
+- Confirm whether the branch input will always be the main branch code or may be a sub-branch code.
+- Confirm whether `GROUP` is the default when a sub-branch is supplied.
+- Confirm the exact table and fields containing transaction approval history.
+- Confirm how to classify a transaction with both branch-level and head-office approval records.
+- Confirm whether branch minimums and sample quotas apply to the combined group or separately to each individual branch when `GROUP` is selected.
+
+## 10. Tier-1 branch-manager approval
+
+### Approval source
+
+Tier-1 branch approval is identified through the primary approver records in `[MPS].[dbo].[CPL_APPROVER]`:
+
+- `CPL_APPROVER.PRIM_IND = 1` identifies the primary/tier-1 approver record.
+- `CPL_APPROVER.USER_SYSID` identifies the approving user.
+- `CPL_APPROVER.BRN_SYSID` identifies the branch to which the approval authority is attached.
+- `CPL_APPROVER.REP_SYSID` controls whether the authority applies branch-wide or to one representative.
+- `[MPS].[dbo].[SYS_USER_CD].USR_NAME` provides the approver name.
+
+The branch approver lookup should retain the approver user ID and name, branch ID/code, and `REP_SYSID` so the approval decision can be audited.
+
+### Reference approver query
+
+```sql
+SELECT
+    A.[BRN_SYSID],
+    A.[DLR_SYSID],
+    A.[RGN_SYSID],
+    A.[BRN_CD],
+    A.[BRN_TYPE],
+    A.[BRN_NAME],
+    A.[BRN_HEAD],
+    A.[BRN_HEAD_CODE],
+    A.[BRN_STATUS],
+    A.[BRN_MGR],
+    A.[BRN_MGR_CODE],
+    A.[DLR_CD],
+    A.[RGN_CD],
+    B.[USER_SYSID] AS APPROVER_USER_SYSID,
+    B.[BRN_SYSID] AS APPROVER_BRN_SYSID,
+    B.[PRIM_IND],
+    B.[REP_SYSID] AS APPROVER_REP_SYSID,
+    C.[USR_NAME] AS APPROVER_USER_NAME
+FROM [MPS].[dbo].[BRN] A
+LEFT JOIN [MPS].[dbo].[CPL_APPROVER] B
+    ON A.BRN_SYSID = B.BRN_SYSID
+   AND B.[PRIM_IND] = 1
+LEFT JOIN [MPS].[dbo].[SYS_USER_CD] C
+    ON B.USER_SYSID = C.USER_SYSID
+   AND C.BRN_SYSID <> 0
+WHERE C.USER_SYSID IS NOT NULL
+ORDER BY
+    A.BRN_CD,
+    A.BRN_TYPE;
+```
+
+### Representative authorization rule
+
+For a transaction or audit event associated with representative `REP_SYSID`:
+
+```sql
+CPL_APPROVER.REP_SYSID = 0
+OR CPL_APPROVER.REP_SYSID = Transaction.REP_SYSID
+```
+
+Interpretation:
+
+- `REP_SYSID = 0`: the approver can approve transactions for any advisor attached to that branch.
+- `REP_SYSID <> 0`: the approver can approve only transactions belonging to the matching representative.
+
+The approval lookup should be restricted to `PRIM_IND = 1` and valid users, consistent with the supplied reference query. When a grouped branch scope is selected, the lookup must evaluate the applicable approver records for every branch in `#BranchScope`.
+
+### Approval classification for sampled transactions
+
+The transaction-sampling output should eventually identify whether the selected transaction was approved by a valid tier-1 branch approver. At minimum, the approval-enrichment fields should include:
+
+- Approval user ID.
+- Approval user name.
+- Approval branch code/ID.
+- Approval `REP_SYSID` scope.
+- A classification such as `BRANCH_WIDE`, `REP_SPECIFIC`, `HEAD_OFFICE`, or `NO_MATCH`.
+
+The approval record must be matched to the transaction's actual approval user and representative. A branch approver row alone is not proof that the user approved a particular transaction; the transaction or approval-history source still needs to be joined using the relevant approval-user and transaction identifiers.
+
+### Open approval questions
+
+- Confirm the transaction approval-history table and the exact column containing the approving `USER_SYSID`.
+- Confirm the exact tier field if approval history contains multiple approval levels; `PRIM_IND = 1` is currently the branch-approver indicator from the reference query.
+- Confirm whether a transaction with multiple approval records should use the highest approval tier, the first approval, or all approval records.
+- Confirm how head-office approvals are identified and how they should be distinguished from branch-manager approvals.
