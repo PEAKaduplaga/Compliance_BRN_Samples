@@ -1,0 +1,32 @@
+/* Branch and tier-1 approver reference query */
+
+SELECT
+    A.[BRN_SYSID],
+    A.[DLR_SYSID],
+    A.[RGN_SYSID],
+    A.[BRN_CD],
+    A.[BRN_TYPE],
+    A.[BRN_NAME],
+    A.[BRN_HEAD],
+    A.[BRN_HEAD_CODE],
+    A.[BRN_STATUS],
+    A.[BRN_MGR],
+    A.[BRN_MGR_CODE],
+    A.[DLR_CD],
+    A.[RGN_CD],
+    B.[USER_SYSID] AS APPROVER_USER_SYSID,
+    B.[BRN_SYSID] AS APPROVER_BRN_SYSID,
+    B.[PRIM_IND],
+    B.[REP_SYSID] AS APPROVER_REP_SYSID,
+    C.[USR_NAME] AS APPROVER_USER_NAME
+FROM [MPS].[dbo].[BRN] A
+LEFT JOIN [MPS].[dbo].[CPL_APPROVER] B
+    ON A.BRN_SYSID = B.BRN_SYSID
+   AND B.[PRIM_IND] = 1
+LEFT JOIN [MPS].[dbo].[SYS_USER_CD] C
+    ON B.USER_SYSID = C.USER_SYSID
+   AND C.BRN_SYSID <> 0
+WHERE C.USER_SYSID IS NOT NULL
+ORDER BY
+    A.BRN_CD,
+    A.BRN_TYPE;
