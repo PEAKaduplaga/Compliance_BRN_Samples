@@ -4,7 +4,7 @@
     This version keeps the existing procedure untouched and incorporates:
       - BRN_CD input with GROUP/INDIVIDUAL branch scope override.
       - Main-branch and sub-branch population resolution.
-      - Rolling twelve-month filtering using TRX_DT and GETDATE().
+      - Rolling twelve-month filtering using TRADE_DT and GETDATE().
       - CMA exclusion, with the prior exception logic preserved as comments.
       - Snapshot and archive compliance-order population with explicit deduplication.
       - Tier-1 branch-approver filtering and approver enrichment.
@@ -276,7 +276,7 @@ BEGIN
         IR.IVT_RISK_CD,
         IR.IVT_RISK_DESC_ENG,
         I.DLR_CD,
-        T.TRX_DT,
+        T.TRADE_DT,
         T.SETTLE_DT,
         T.TRX_ENTRY_DT,
         T.TRX_CD,
@@ -318,8 +318,8 @@ BEGIN
         ON T.ENTRY_SYSID = U.USER_SYSID
     LEFT JOIN [MPS].[dbo].[S_IVT_RISK] IR
         ON IR.IVT_RISK_CD = IT.IVT_RISK_CD
-    WHERE T.TRX_DT >= @DateFrom
-      AND T.TRX_DT < @DateTo
+    WHERE T.TRADE_DT >= @DateFrom
+      AND T.TRADE_DT < @DateTo
       AND T.TRX_NET IS NOT NULL
       AND
       (
@@ -989,25 +989,25 @@ BEGIN
         T.Transaction_Type,
         T.Gross_Amount,
         T.Net_Amount,
-        S.Order_Source,
-        S.CPL_ORD_ID,
-        S.ORD_SYSID,
-        S.ORD_TRADE_DT,
-        S.ORD_AMT,
-        S.SNAPSHOT_ID,
-        S.Order_Type,
-        S.Order_Entry_Date,
-        S.TIER1_REVIEWER_USER_SYSID,
-        S.TIER1_REVIEWER_NAME,
-        S.APPROVER_BRN_CD,
-        S.APPROVER_USER_SYSID,
-        S.APPROVER_USER_NAME,
-        S.APPROVER_REP_SYSID,
-        S.Approval_Classification,
-        S.BRANCH_REVIEW_ACTION,
-        S.BRANCH_REVIEW_DATE,
-        S.HO_REVIEW_ACTION,
-        S.HO_REVIEW_DATE,
+        T.Order_Source,
+        T.CPL_ORD_ID,
+        T.ORD_SYSID,
+        T.ORD_TRADE_DT,
+        T.ORD_AMT,
+        T.SNAPSHOT_ID,
+        T.Order_Type,
+        T.Order_Entry_Date,
+        T.TIER1_REVIEWER_USER_SYSID,
+        T.TIER1_REVIEWER_NAME,
+        T.APPROVER_BRN_CD,
+        T.APPROVER_USER_SYSID,
+        T.APPROVER_USER_NAME,
+        T.APPROVER_REP_SYSID,
+        T.Approval_Classification,
+        T.BRANCH_REVIEW_ACTION,
+        T.BRANCH_REVIEW_DATE,
+        T.HO_REVIEW_ACTION,
+        T.HO_REVIEW_DATE,
         S.Sample_Type,
         S.Rule_Rank AS Selection_Rank,
         S.Rule_SubRank AS Selection_SubRank,
