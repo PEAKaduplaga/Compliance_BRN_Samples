@@ -15,7 +15,7 @@
 */
 CREATE OR ALTER PROCEDURE [dbo].[PEAK_COMPLIANCE_SP_UVS_BRN_SAMPLE_TRX]
     @BRN varchar(10),
-    @BRN_OVERRIDE bit = 0
+    @BRN_OVERRIDE varchar(1) = 'N'
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -32,6 +32,17 @@ BEGIN
 
     DECLARE @DateTo datetime = GETDATE();
     DECLARE @DateFrom datetime = DATEADD(MONTH, -12, @DateTo);
+    DECLARE @UseIndividualBranch bit;
+
+    SET @UseIndividualBranch =
+        CASE
+            WHEN UPPER(LTRIM(RTRIM(@BRN_OVERRIDE))) = 'Y' THEN 1
+            WHEN UPPER(LTRIM(RTRIM(@BRN_OVERRIDE))) = 'N' THEN 0
+            ELSE NULL
+        END;
+
+    IF @UseIndividualBranch IS NULL
+        THROW 50005, 'BRN override must be Y or N.', 1;
 
     DECLARE @InputBRN_SYSID int;
     DECLARE @InputBRN_TYPE char(1);
@@ -56,7 +67,7 @@ BEGIN
     IF @InputBRN_SYSID IS NULL
         THROW 50001, 'The supplied BRN_CD was not found in MPS.dbo.BRN.', 1;
 
-    IF @BRN_OVERRIDE = 1
+    IF @UseIndividualBranch = 1
         SET @ScopeBRN_CD = @BRN;
     ELSE IF @InputBRN_TYPE = 'S'
     BEGIN
@@ -91,7 +102,7 @@ BEGIN
         Scope_Source varchar(20) NOT NULL
     );
 
-    IF @BRN_OVERRIDE = 1
+    IF @UseIndividualBranch = 1
     BEGIN
         INSERT INTO #BranchScope
         (
