@@ -69,21 +69,24 @@ The sampling rules are maintained as ordered rule definitions so that thresholds
 
 - Eligibility gate: the branch must have at least 10 qualifying transactions during the rolling twelve-month period.
 - Current sample size: 3 transactions per representative; this must be configurable.
-- Rank `1` is the highest priority and rank `6` is the lowest priority.
+- Rank `1` is the highest priority and rank `4` is the lowest priority.
 - Process candidates by ascending rank.
-- Within each rank, select transactions in descending `Gross_Amount` order.
-- Continue to the next rank only when fewer than 3 transactions have been selected for the representative; lower-ranked transactions backfill the remaining slots.
+- Within rank `3`, process subranks in ascending order.
+- Within each rank or subrank, select transactions in descending `Gross_Amount` order.
+- If a transaction matches multiple rules, retain it once under the highest-priority matching rule.
+- Continue to the next rank or subrank only when fewer than 3 transactions have been selected for the representative; lower-priority candidates backfill the remaining slots.
 
 Current rule configuration from `Sheet1`:
 
-| Rank | Description | Transaction codes | Additional criteria |
-|---:|---|---|---|
-| 1 | Representative under supervision | Any | `TRADE_WATCH = 1` |
-| 2 | Leveraged account | Any | `PLN_CD IN ('41', '18')` |
-| 3 | Redemption | `7211, 7111, 7312, 7313, 7314, 7315` | `Gross_Amount >= 10000` |
-| 4 | Purchase | `2111, 2211` | `Gross_Amount >= 10000` |
-| 5 | Purchase | `2111, 2211` | `IVT_RISK_CD = 30` and `Gross_Amount >= 5000` |
-| 6 | Purchase | `2111, 2211` | `IVT_RISK_CD IN (35, 40, 45, 50, 100)` and `Gross_Amount >= 2500` |
+| Rank | Subrank | Description | Transaction codes | Additional criteria |
+|---:|---:|---|---|---|
+| 1 | — | Representative under supervision | Any | `TRADE_WATCH = 1` |
+| 2 | — | Leveraged account | Any | `PLN_CD IN (41, 18)` |
+| 3 | 1 | Purchase | `2111, 2211` | `IVT_RISK_CD IN (35, 40, 45, 50, 100)` and `Gross_Amount >= 2500` |
+| 3 | 2 | Purchase | `2111, 2211` | `IVT_RISK_CD = 30` and `Gross_Amount >= 5000` |
+| 3 | 3 | Purchase | `2111, 2211` | `Gross_Amount >= 10000` |
+| 3 | 4 | Switch In | `4611, 4711, 4911, 4910` | `Gross_Amount >= 10000` |
+| 4 | — | Redemption | `7211, 7111, 7312, 7313, 7314, 7315` | `Gross_Amount >= 10000` |
 
 ### Direct/non-wired sample
 
