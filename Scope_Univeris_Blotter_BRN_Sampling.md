@@ -288,11 +288,12 @@ This distinction must be captured before sampling so that selected transactions 
 
 ### Open decisions
 
-- Confirm whether the branch input will always be the main branch code or may be a sub-branch code.
-- Confirm whether `GROUP` is the default when a sub-branch is supplied.
-- Confirm the exact table and fields containing transaction approval history.
-- Confirm how to classify a transaction with both branch-level and head-office approval records.
-- Confirm whether branch minimums and sample quotas apply to the combined group or separately to each individual branch when `GROUP` is selected.
+- The input is `BRN_CD`; `GROUP` is the default unless the override is enabled.
+- All branch types are in scope. A branch with `BRN_TYPE = 'S'` must have a `BRN_HEAD_CODE`; missing parent information should raise an explicit data-quality error.
+- The transaction date basis is `ENTRY_DATE`, which is expected to be close to `ORD_TRADE_DT`.
+- The archive table is normally the definitive source when an order appears in both current and archive data.
+- Sampling and branch counts apply to the combined resolved branch group unless the individual-branch override is enabled.
+- The final population is one row per logical order.
 
 ## 10. Tier-1 branch-manager approval
 
@@ -361,19 +362,65 @@ The approval lookup should be restricted to `PRIM_IND = 1` and valid users, cons
 
 ### Approval classification for sampled transactions
 
-The transaction-sampling output should eventually identify whether the selected transaction was approved by a valid tier-1 branch approver. At minimum, the approval-enrichment fields should include:
+The transaction-sampling output should eventually identify whether the selected transaction was approved by a valid tier-1 branch approver. The first implementation can use a single validation step based on the order's recorded tier-1 reviewer and the branch approver table, rather than reproducing the full approval hierarchy. At minimum, the approval-enrichment fields should include:
 
 - Approval user ID.
 - Approval user name.
 - Approval branch code/ID.
 - Approval `REP_SYSID` scope.
-- A classification such as `BRANCH_WIDE`, `REP_SPECIFIC`, `HEAD_OFFICE`, or `NO_MATCH`.
+- A classification such as `BRANCH_MANAGER`, `HEAD_OFFICE`, or `NO_MATCH`.
 
 The approval record must be matched to the transaction's actual approval user and representative. A branch approver row alone is not proof that the user approved a particular transaction; the transaction or approval-history source still needs to be joined using the relevant approval-user and transaction identifiers.
 
 ### Open approval questions
 
-- Confirm the transaction approval-history table and the exact column containing the approving `USER_SYSID`.
-- Confirm the exact tier field if approval history contains multiple approval levels; `PRIM_IND = 1` is currently the branch-approver indicator from the reference query.
-- Confirm whether a transaction with multiple approval records should use the highest approval tier, the first approval, or all approval records.
+- Confirm whether the first implementation should enforce the rep-specific `CPL_APPROVER.REP_SYSID` restriction, or only validate branch, primary approver, and matching reviewer user.
 - Confirm how head-office approvals are identified and how they should be distinguished from branch-manager approvals.
+
+## 11. Compliance-order population source
+
+### Source tables
+
+The transaction-sampling population should be built from both order snapshot tables:
+
+- `[MPS].[dbo].[SNAPSHOT_CPL_ORD]`
+- `[MPS].[dbo].[ARC_SNAPSHOT_CPL_ORD]`
+
+The two sources contain the order, client/plan, product, branch, representative, and compliance-approval information required for sampling. The population must be combined before applying branch scope, approval classification, or sample-selection rules.
+
+### Combined population requirements
+
+The implementation should:
+
+1. Select the common sampling columns from both tables.
+2. Add a source indicator, such as `SNAPSHOT` or `ARCHIVE`, for auditability.
+3. Combine the sources with `UNION ALL` so duplicate detection remains explicit and reviewable.
+4. Deduplicate the combined set before any branch counts or transaction samples are calculated.
+5. Preserve the selected source row and its `SNAPSHOT_ID` for traceability.
+
+### Duplicate handling
+
+`ORD_SYSID` will be treated as the logical order key for the first implementation because it is also the key used to join the approved-order population back to the transaction preselection. `CPL_ORD_ID` should be retained for auditability and used as a secondary validation key.
+
+The deduplication step should use a deterministic `ROW_NUMBER()` rule and retain exactly one record per logical order. When the same order appears in both sources, the archive row should normally win because the archive is considered definitive. `SNAPSHOT_ID` or `ENTRY_DATE` can be used as the tie-breaker within the same source.
+
+No branch minimum, representative quota, or rank should be calculated until deduplication is complete; otherwise an order present in both tables could be counted twice or selected twice.
+
+### Sampling and approval fields
+
+The combined order population includes the fields needed to drive the existing sampling logic, including:
+
+- `ORD_SYSID`, `CPL_ORD_ID`, `ORD_TRADE_DT`, and `ORD_AMT`.
+- `TYPE`, `ORD_DIRECT`, `ORD_CLIENT_SIG`, `ORD_INFRACTION`, `INFRACTION_TYPES`, and `OFF_BOOK`.
+- `PLN_SYSID`, `PLN_LEVERAGED`, `PLN_LTA`, `PLN_TRADE_WATCH`, and `REP_TRADE_WATCH`.
+- `REP_CD`, `BRN_CD`, `DLR_CD`, and `RGN_CD`.
+- `CPL_TIER1`, `CPL_TIER1_DESCN`, `CPL_TIER1_ACTION`, `CPL_TIER1_OVR`, and `CPL_TIER1_PRIM_IND`.
+- `CPL_TIER2` fields and pending-approval fields for later escalation analysis.
+
+The branch-group scope should be applied using `BRN_CD` after the order population has been deduplicated. Tier-1 approval classification should use the order-level approval fields together with the branch approver rules documented above, so the final sample can distinguish branch-manager approval from head-office or unmatched approval.
+
+### Open decisions
+
+- Confirm whether `ORD_SYSID` identifies the same logical order in both current and archive sources.
+- Confirm whether `SNAPSHOT_ID` is chronological and can be used as the tie-breaker within a source.
+- Confirm whether `TYPE` values such as `PUR` and `RED` are the authoritative transaction classification for sampling.
