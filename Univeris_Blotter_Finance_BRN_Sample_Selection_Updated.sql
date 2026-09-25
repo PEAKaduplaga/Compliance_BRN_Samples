@@ -189,6 +189,7 @@ BEGIN
         Rep_SYSID int,
         Rep_Name varchar(100),
         TRX_SYSID int NOT NULL PRIMARY KEY,
+        ORD_SYSID bigint,
         BRN_SYSID int,
         IVD_SYSID int,
         Fund_Code varchar(20),
@@ -241,7 +242,7 @@ BEGIN
     (
         Client_ID, Client_Name, Client_Status, Client_Setup, Client_Stop,
         Plan_Id, PLN_CD, Plan_Type, Rep_SYSID, Rep_Code, Rep_Name,
-        TRADE_WATCH, Trade_type, TRX_SYSID, BRN_SYSID, IVD_SYSID,
+        TRADE_WATCH, Trade_type, TRX_SYSID, ORD_SYSID, BRN_SYSID, IVD_SYSID,
         Fund_Code, Fund_Name, Fund_Type, LOAD_Type, IVT_RISK_CD, Product_Risk,
         Dealer_Code, Trade_Date, Settlement_Date, Entry_Date, TRX_CD,
         Transaction_Type, Gross_Amount, Net_Amount, Dealer_Commission, DSC,
@@ -267,6 +268,7 @@ BEGIN
         R.TRADE_WATCH,
         CASE WHEN T.TRX_WO_NUM IS NULL THEN 'D' ELSE 'W' END,
         T.TRX_SYSID,
+        T.ORD_SYSID,
         T.BRN_SYSID,
         T.IVD_SYSID,
         E.SYMBOL,
@@ -512,6 +514,8 @@ BEGIN
       AND D.ENTRY_DATE >= @DateFrom
       AND D.ENTRY_DATE < @DateTo;
 
+    CREATE INDEX IX_OrderPopulation_Ord ON #OrderPopulation (ORD_SYSID);
+
     /* Keep only preselected transactions with a matching tier-1 branch approver. */
     ;WITH ApprovedOrders AS
     (
@@ -544,7 +548,7 @@ BEGIN
             END AS Approval_Classification
         FROM #tmpReport T
         JOIN #OrderPopulation O
-            ON O.ORD_SYSID = T.TRX_SYSID
+            ON O.ORD_SYSID = T.ORD_SYSID
         JOIN #BranchScope BS
             ON BS.BRN_CD = O.BRN_CD
         LEFT JOIN [MPS].[dbo].[SYS_USER_CD] UT1
