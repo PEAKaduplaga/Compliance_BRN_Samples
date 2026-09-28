@@ -41,6 +41,7 @@ END;
                 THEN B.[IVR_REG_2]
             ELSE B.[IVR_PRIM_LNAME] + ', ' + B.[IVR_PRIM_FNAME]
         END AS Client_Name,
+        B.[IVR_SETUP_DT] AS Client_Setup_Date,
         A.[PLN_SYSID],
         A.[ACT_SYSID],
         A.[USER_SYSID],
@@ -164,11 +165,24 @@ SELECT
     --F.REP_SYSID,
 
     S.Change_Date,
+    F.Client_Setup_Date,
+    P.[SETUP_DT] AS Plan_Setup_Date,
+    CASE
+        WHEN F.Client_Setup_Date IS NOT NULL
+         AND CAST(F.ADT_DATE AS date) = CAST(F.Client_Setup_Date AS date)
+            THEN 'New Client'
+        WHEN P.[SETUP_DT] IS NOT NULL
+         AND CAST(F.ADT_DATE AS date) = CAST(P.[SETUP_DT] AS date)
+            THEN 'New Plan'
+        ELSE 'KYC Update'
+    END AS KYC_Change_Type,
     'KYC' AS Sample_Type,
     S.Sample_Sequence
 FROM SelectedEvents S
 JOIN FilteredAudit F
     ON F.ADT_SYSID = S.ADT_SYSID
+LEFT JOIN [PEAK_LAKE_BI].[UVS].[pln] P
+    ON P.[PLN_SYSID] = F.[PLN_SYSID]
 ORDER BY
     F.Rep_Code,
     S.Sample_Sequence,

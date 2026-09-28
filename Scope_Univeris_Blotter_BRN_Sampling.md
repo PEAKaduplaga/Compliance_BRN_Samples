@@ -205,7 +205,10 @@ Each selected KYC sample should include, at minimum:
 - Audit table, activity, and changed field.
 - Before and after values.
 - Transaction/user context where available, excluding `USER_SYSID` as a changed field.
+- Client and plan setup dates, with a KYC change classification: `New Client`, `New Plan`, or `KYC Update`.
 - A sample type and selection sequence.
+
+The KYC change classification compares the audit event date with the setup dates. A matching client `IVR_SETUP_DT` is classified as `New Client`; otherwise, a matching plan `SETUP_DT` is classified as `New Plan`; all other events are classified as `KYC Update`. Client classification takes precedence if both dates match.
 
 ### Modular controls
 
