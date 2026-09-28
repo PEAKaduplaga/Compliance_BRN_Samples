@@ -101,8 +101,10 @@ Current rule configuration from `Sheet1`:
 - Eligibility gate: the branch must have at least 5 qualifying transactions during the rolling twelve-month period.
 - Current sample size: 1 transaction per representative; this must be configurable.
 - Require `AGE >= 70`.
-- Process the configured transaction-code ranks in ascending order.
-- Select the highest `Gross_Amount` available for the representative, using the next rank only if the higher-priority rank has no candidate.
+- Prioritize transactions where `KYC_PLN.TIME_HORIZON_CD = 4`.
+- Within the `TIME_HORIZON_CD = 4` group, process purchase, redemption, and switch rules in that order.
+- If the representative has no qualifying transaction with `TIME_HORIZON_CD = 4`, fall back to the other time-horizon values and apply the same purchase, redemption, and switch order.
+- Select the highest `Gross_Amount` available within each priority, using the next priority only if the higher-priority priority has no candidate.
 
 ### New-account sample
 

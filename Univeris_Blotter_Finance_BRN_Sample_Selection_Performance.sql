@@ -193,6 +193,7 @@ CREATE TABLE #TransactionPopulation
     Plan_Last_Update datetime,
     Plan_KYC_Last_Update datetime,
     KYC_PLN_SYSID int,
+    TIME_HORIZON_CD smallint,
     Rep_SYSID int,
     Rep_Name varchar(100),
     TRX_SYSID int NOT NULL PRIMARY KEY,
@@ -227,7 +228,7 @@ INSERT INTO #TransactionPopulation
 (
     Client_ID, Client_Name, Client_Status, Client_Setup, Client_Stop,
     Plan_Id, PLN_CD, Plan_Type, Plan_Status, Plan_Setup, Plan_Close,
-    Plan_Last_Update, Plan_KYC_Last_Update, KYC_PLN_SYSID,
+    Plan_Last_Update, Plan_KYC_Last_Update, KYC_PLN_SYSID, TIME_HORIZON_CD,
     Rep_SYSID, Rep_Name, TRX_SYSID, ORD_SYSID, BRN_SYSID, IVD_SYSID,
     Fund_Code, Fund_Name, Fund_Type, LOAD_Type, IVT_RISK_CD, Product_Risk,
     Dealer_Code, Rep_Code, TRADE_WATCH, Trade_type, Trade_Date,
@@ -253,6 +254,7 @@ SELECT
     P.LAST_UPD_DT,
     KP.CPL_UPD_DT,
     P.KYC_PLN_SYSID,
+    KP.TIME_HORIZON_CD,
     R.REP_SYSID,
     R.REP_FNAME + ' ' + R.REP_LNAME,
     T.TRX_SYSID,
@@ -297,7 +299,8 @@ JOIN [MPS].[dbo].[REP] R ON I.REP_CD = R.REP_CD
 OUTER APPLY
 (
     SELECT TOP (1)
-        KP.CPL_UPD_DT
+        KP.CPL_UPD_DT,
+        KP.TIME_HORIZON_CD
     FROM [MPS].[dbo].[KYC_PLN] KP
     WHERE KP.KYC_PLN_SYSID = P.KYC_PLN_SYSID
     ORDER BY KP.CPL_UPD_DT DESC
@@ -510,6 +513,7 @@ DECLARE @RuleConfig TABLE
     Sample_Type varchar(20) NOT NULL,
     Rule_Rank int NOT NULL,
     Rule_SubRank int NULL,
+    TIME_HORIZON_CD smallint NULL,
     Min_Gross_Amount float NULL,
     Min_Age smallint NULL,
     Trade_Type char(1) NULL,
@@ -540,23 +544,26 @@ DECLARE @RulePlanCode TABLE
 
 INSERT INTO @RuleConfig
 (
-    Rule_ID, Sample_Type, Rule_Rank, Rule_SubRank, Min_Gross_Amount,
+    Rule_ID, Sample_Type, Rule_Rank, Rule_SubRank, TIME_HORIZON_CD, Min_Gross_Amount,
     Min_Age, Trade_Type, Trade_Watch, Rule_Description
 )
 VALUES
-    (101, 'SUPERVISION', 1, NULL, NULL, NULL, NULL, 1, 'Representative under supervision'),
-    (102, 'SUPERVISION', 2, NULL, NULL, NULL, NULL, NULL, 'Leveraged account'),
-    (103, 'SUPERVISION', 3, 1, 2500, NULL, NULL, NULL, 'Purchase higher risk $2,500+'),
-    (104, 'SUPERVISION', 3, 2, 5000, NULL, NULL, NULL, 'Purchase medium risk $5,000+'),
-    (105, 'SUPERVISION', 3, 3, 10000, NULL, NULL, NULL, 'Purchase $10,000+'),
-    (106, 'SUPERVISION', 3, 4, 10000, NULL, NULL, NULL, 'Switch In $10,000+'),
-    (107, 'SUPERVISION', 4, NULL, 10000, NULL, NULL, NULL, 'Redemption $10,000+'),
-    (201, 'DIRECT', 1, NULL, NULL, NULL, 'D', NULL, 'Non-wired purchase'),
-    (202, 'DIRECT', 2, NULL, NULL, NULL, 'D', NULL, 'Non-wired redemption'),
-    (203, 'DIRECT', 3, NULL, NULL, NULL, 'D', NULL, 'Non-wired switch'),
-    (301, 'SENIOR', 1, NULL, NULL, 70, NULL, NULL, 'Senior purchase'),
-    (302, 'SENIOR', 2, NULL, NULL, 70, NULL, NULL, 'Senior redemption'),
-    (303, 'SENIOR', 3, NULL, NULL, 70, NULL, NULL, 'Senior switch');
+    (101, 'SUPERVISION', 1, NULL, NULL, NULL, NULL, NULL, 1, 'Representative under supervision'),
+    (102, 'SUPERVISION', 2, NULL, NULL, NULL, NULL, NULL, NULL, 'Leveraged account'),
+    (103, 'SUPERVISION', 3, 1, NULL, 2500, NULL, NULL, NULL, 'Purchase higher risk $2,500+'),
+    (104, 'SUPERVISION', 3, 2, NULL, 5000, NULL, NULL, NULL, 'Purchase medium risk $5,000+'),
+    (105, 'SUPERVISION', 3, 3, NULL, 10000, NULL, NULL, NULL, 'Purchase $10,000+'),
+    (106, 'SUPERVISION', 3, 4, NULL, 10000, NULL, NULL, NULL, 'Switch In $10,000+'),
+    (107, 'SUPERVISION', 4, NULL, NULL, 10000, NULL, NULL, NULL, 'Redemption $10,000+'),
+    (201, 'DIRECT', 1, NULL, NULL, NULL, NULL, 'D', NULL, 'Non-wired purchase'),
+    (202, 'DIRECT', 2, NULL, NULL, NULL, NULL, 'D', NULL, 'Non-wired redemption'),
+    (203, 'DIRECT', 3, NULL, NULL, NULL, NULL, 'D', NULL, 'Non-wired switch'),
+    (301, 'SENIOR', 1, NULL, 4, NULL, 70, NULL, NULL, 'Senior horizon 4 purchase'),
+    (302, 'SENIOR', 2, NULL, 4, NULL, 70, NULL, NULL, 'Senior horizon 4 redemption'),
+    (303, 'SENIOR', 3, NULL, 4, NULL, 70, NULL, NULL, 'Senior horizon 4 switch'),
+    (304, 'SENIOR', 4, NULL, NULL, NULL, 70, NULL, NULL, 'Senior other horizon purchase'),
+    (305, 'SENIOR', 5, NULL, NULL, NULL, 70, NULL, NULL, 'Senior other horizon redemption'),
+    (306, 'SENIOR', 6, NULL, NULL, NULL, 70, NULL, NULL, 'Senior other horizon switch');
 
 INSERT INTO @RuleTrxCode (Rule_ID, TRX_CD)
 VALUES
@@ -568,9 +575,12 @@ VALUES
     (201, 2111), (201, 2211),
     (202, 7211), (202, 7111), (202, 7312), (202, 7313), (202, 7314), (202, 7315),
     (203, 4511), (203, 4611), (203, 6511), (203, 6611), (203, 2260),
-    (301, 2111), (301, 2211),
-    (302, 7211), (302, 7111), (302, 7312), (302, 7313), (302, 7314), (302, 7315),
-    (303, 4511), (303, 4611), (303, 6511), (303, 6611), (303, 2260);
+        (301, 2111), (301, 2211),
+        (302, 7211), (302, 7111), (302, 7312), (302, 7313), (302, 7314), (302, 7315),
+        (303, 4511), (303, 4611), (303, 6511), (303, 6611), (303, 2260),
+        (304, 2111), (304, 2211),
+        (305, 7211), (305, 7111), (305, 7312), (305, 7313), (305, 7314), (305, 7315),
+        (306, 4511), (306, 4611), (306, 6511), (306, 6611), (306, 2260);
 
 INSERT INTO @RuleRiskCode (Rule_ID, IVT_RISK_CD)
 VALUES
@@ -610,6 +620,7 @@ DECLARE @CandidateMatches TABLE
     JOIN @RuleConfig R
         ON (R.Trade_Type IS NULL OR R.Trade_Type = T.Trade_type)
        AND (R.Trade_Watch IS NULL OR R.Trade_Watch = T.TRADE_WATCH)
+       AND (R.TIME_HORIZON_CD IS NULL OR R.TIME_HORIZON_CD = T.TIME_HORIZON_CD)
        AND (R.Min_Gross_Amount IS NULL OR T.Gross_Amount >= R.Min_Gross_Amount)
        AND (R.Min_Age IS NULL OR T.AGE >= R.Min_Age)
     WHERE
@@ -774,6 +785,7 @@ SELECT
     T.Gross_Amount,
     T.Net_Amount,
     T.AGE,
+    T.TIME_HORIZON_CD,
     K_SALARY.SALARY_DESC_ENG AS Personal_Income,
     NW.NET_WORTH_DESC_ENG AS Net_Worth,
     CASE LTRIM(RTRIM(K.IVR_INV_KNOW))
