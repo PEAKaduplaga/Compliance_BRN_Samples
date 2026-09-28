@@ -2,20 +2,36 @@
 
 /* Inputs and sampling controls: expose these as procedure parameters later if needed. */
 DECLARE @BRN varchar(10) = 'ON010';
+DECLARE @BRN_OVERRIDE varchar(1) = 'N'; -- Y = individual branch, N = main branch plus sub-branches
 DECLARE @SamplesPerRep int = 1;
 DECLARE @MinBranchChanges int = 5;
 
 DECLARE @DateTo datetime = GETDATE();
 DECLARE @DateFrom datetime = DATEADD(MONTH, -12, @DateTo);
+DECLARE @UseIndividualBranch bit =
+    CASE
+        WHEN UPPER(LTRIM(RTRIM(@BRN_OVERRIDE))) = 'Y' THEN 1
+        WHEN UPPER(LTRIM(RTRIM(@BRN_OVERRIDE))) = 'N' THEN 0
+        ELSE NULL
+    END;
+
+IF @UseIndividualBranch IS NULL
+    THROW 50005, 'BRN override must be Y or N.', 1;
+
 DECLARE @BRN_SYSID int;
+DECLARE @InputBRN_TYPE char(1);
+DECLARE @InputBRN_HEAD_CODE varchar(10);
 DECLARE @BRN_NAME varchar(100);
 DECLARE @BRN_STATUS varchar(2);
 DECLARE @BRN_MGR varchar(100);
 DECLARE @DLR_CD varchar(10);
+DECLARE @ScopeBRN_CD varchar(10);
 
 /* Resolve the supplied branch code to the branch primary key. */
 SELECT
     @BRN_SYSID = B.BRN_SYSID,
+    @InputBRN_TYPE = B.BRN_TYPE,
+    @InputBRN_HEAD_CODE = NULLIF(LTRIM(RTRIM(B.BRN_HEAD_CODE)), ''),
     @BRN_NAME = B.BRN_NAME,
     @BRN_STATUS = B.BRN_STATUS,
     @BRN_MGR = B.BRN_MGR,
@@ -28,11 +44,81 @@ BEGIN
     THROW 50001, 'The supplied BRN_CD was not found in MPS.dbo.BRN.', 1;
 END;
 
+IF @UseIndividualBranch = 1
+    SET @ScopeBRN_CD = @BRN;
+ELSE IF @InputBRN_TYPE = 'S'
+BEGIN
+    IF @InputBRN_HEAD_CODE IS NULL
+        THROW 50002, 'The supplied sub-branch has no BRN_HEAD_CODE for group resolution.', 1;
+
+    SET @ScopeBRN_CD = @InputBRN_HEAD_CODE;
+
+    IF NOT EXISTS
+    (
+        SELECT 1
+        FROM [PEAK_LAKE_BI].[UVS].[brn] B
+        WHERE B.BRN_CD = @ScopeBRN_CD
+          AND B.BRN_TYPE = 'M'
+    )
+        THROW 50003, 'The sub-branch BRN_HEAD_CODE does not identify a valid main branch.', 1;
+END;
+ELSE
+    SET @ScopeBRN_CD = @BRN;
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM [PEAK_LAKE_BI].[UVS].[brn] B
+    WHERE
+        (@UseIndividualBranch = 1 AND B.BRN_CD = @BRN)
+        OR
+        (
+            @UseIndividualBranch = 0
+            AND B.BRN_STATUS = 'A'
+            AND
+            (
+                B.BRN_CD = @ScopeBRN_CD
+                OR (B.BRN_TYPE = 'S' AND B.BRN_HEAD_CODE = @ScopeBRN_CD)
+            )
+        )
+)
+    THROW 50004, 'No active branch rows were found for the requested branch scope.', 1;
+
 /*
     A CVC change is treated as one ADT_SYSID event. If an event changes
     multiple fields, all eligible field rows for the selected event are returned.
 */
-;WITH FilteredAudit AS
+;WITH BranchScope AS
+(
+    SELECT
+        B.BRN_SYSID,
+        B.BRN_CD,
+        B.BRN_TYPE,
+        B.BRN_NAME,
+        B.BRN_STATUS,
+        B.BRN_HEAD_CODE,
+        B.BRN_MGR,
+        B.BRN_MGR_CODE,
+        B.DLR_CD,
+        CASE
+            WHEN @UseIndividualBranch = 1 THEN 'INPUT'
+            WHEN B.BRN_CD = @ScopeBRN_CD THEN 'MAIN'
+            ELSE 'SUB_BRANCH'
+        END AS Scope_Source
+    FROM [PEAK_LAKE_BI].[UVS].[brn] B
+    WHERE
+        (@UseIndividualBranch = 1 AND B.BRN_CD = @BRN)
+        OR
+        (
+            @UseIndividualBranch = 0
+            AND B.BRN_STATUS = 'A'
+            AND
+            (
+                B.BRN_CD = @ScopeBRN_CD
+                OR (B.BRN_TYPE = 'S' AND B.BRN_HEAD_CODE = @ScopeBRN_CD)
+            )
+        )
+), FilteredAudit AS
 (
     SELECT
         A.[IVR_SYSID],
@@ -63,8 +149,9 @@ END;
         ON A.IVR_SYSID = B.IVR_SYSID
     LEFT JOIN [PEAK_LAKE_BI].[UVS].[rep] C
         ON B.REP_SYSID = C.REP_SYSID
-    WHERE B.BRN_SYSID = @BRN_SYSID
-      AND A.ADT_DATE >= @DateFrom
+    JOIN BranchScope BS
+        ON BS.BRN_SYSID = B.BRN_SYSID
+    WHERE A.ADT_DATE >= @DateFrom
       AND A.ADT_DATE < @DateTo
       AND A.ADT_AFTER IS NOT NULL
       AND A.ADT_AFTER <> ''
@@ -141,11 +228,11 @@ END;
     WHERE R.Sample_Sequence <= @SamplesPerRep
 )
 SELECT
-    @BRN AS BRN_CD,
-    @BRN_NAME AS BRN_NAME,
-    @BRN_STATUS AS BRN_STATUS,
-    @BRN_MGR AS BRN_MGR,
-    @DLR_CD AS DLR_CD,
+    BS.BRN_CD,
+    BS.BRN_NAME,
+    BS.BRN_STATUS,
+    BS.BRN_MGR,
+    BS.DLR_CD,
     F.Rep_Code,
     F.Rep_Name,
     F.IVR_SYSID,
@@ -181,6 +268,8 @@ SELECT
 FROM SelectedEvents S
 JOIN FilteredAudit F
     ON F.ADT_SYSID = S.ADT_SYSID
+JOIN BranchScope BS
+    ON BS.BRN_SYSID = F.BRN_SYSID
 LEFT JOIN [PEAK_LAKE_BI].[UVS].[pln] P
     ON P.[PLN_SYSID] = F.[PLN_SYSID]
 ORDER BY

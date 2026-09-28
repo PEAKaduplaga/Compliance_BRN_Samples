@@ -262,7 +262,7 @@ The branch scope should be resolved from `[MPS].[dbo].[BRN]` before the transact
 - `BRN_STATUS` — used to determine whether the branch is active.
 - `BRN_MGR_CODE` — branch manager identifier for later approval-source classification.
 
-The stored procedure should create a temporary branch-scope table at the beginning of execution, for example `#BranchScope`, with at least:
+The branch-scope relation should be resolved before population filtering. Where temporary tables are supported, the stored procedure may create a local table such as `#BranchScope`; for Fabric distributed queries, the same relation must be represented as a CTE because temporary-table inserts are not supported in that execution mode. The scope relation should carry at least:
 
 | Column | Purpose |
 |---|---|
@@ -277,13 +277,13 @@ Resolution sequence:
 
 1. Find the input row using `BRN_CD`.
 2. Stop with an explicit error if no branch row is found.
-3. If the override is `TRUE`, insert only the supplied branch into `@BranchScope`.
-4. If the override is `FALSE` and the input is a main branch (`BRN_TYPE = 'M'`), insert the main branch plus active rows where `BRN_HEAD_CODE` equals the main branch code.
-5. If the override is `FALSE` and the input is a sub-branch (`BRN_TYPE = 'S'`), resolve its `BRN_HEAD_CODE`, then insert the parent main branch and all active sub-branches under that parent.
+3. If the override is `Y`, include only the supplied branch in the scope relation.
+4. If the override is `N` and the input is a main branch (`BRN_TYPE = 'M'`), include the main branch plus active rows where `BRN_HEAD_CODE` equals the main branch code.
+5. If the override is `N` and the input is a sub-branch (`BRN_TYPE = 'S'`), resolve its `BRN_HEAD_CODE`, then include the parent main branch and all active sub-branches under that parent.
 6. Require a valid parent/main branch code when group resolution is requested for a sub-branch; otherwise stop with an explicit error rather than silently sampling only one branch.
-7. Use the resulting `@BranchScope.BRN_SYSID` set for all transaction filtering and branch-level population counts.
+7. Use the resulting `BRN_SYSID` set for all transaction filtering and branch-level population counts.
 
-User-defined functions and table-valued functions should not be used for the KYC/Fabric Delta workflow because Fabric Delta Lake does not support the required function approach. The temporary `#BranchScope` table is the required implementation pattern. It is local to one procedure execution, supports the runtime override, and carries branch metadata into later approval-source classification.
+User-defined functions and table-valued functions should not be used for the KYC/Fabric Delta workflow because Fabric Delta Lake does not support the required function approach. `KYC_BRN_SAMPLE.sql` uses a `BranchScope` CTE for Fabric distributed processing; MPS-side scripts may use `#BranchScope` where temporary tables are supported. Both patterns support the runtime override and carry branch metadata into later filtering and approval-source classification.
 
 ### Approval-source distinction
 
@@ -366,7 +366,7 @@ Interpretation:
 - `REP_SYSID = 0`: the approver can approve transactions for any advisor attached to that branch.
 - `REP_SYSID <> 0`: the approver can approve only transactions belonging to the matching representative.
 
-The approval lookup should be restricted to `PRIM_IND = 1` and valid users, consistent with the supplied reference query. When a grouped branch scope is selected, the lookup must evaluate the applicable approver records for every branch in `#BranchScope`.
+The approval lookup should be restricted to `PRIM_IND = 1` and valid users, consistent with the supplied reference query. When a grouped branch scope is selected, the lookup must evaluate the applicable approver records for every branch in the resolved branch-scope relation.
 
 ### Approval classification for sampled transactions
 
