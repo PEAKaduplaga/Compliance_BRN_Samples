@@ -173,6 +173,22 @@ JOIN [MPS].[dbo].[SYS_USER_CD] U
    AND U.BRN_SYSID <> 0
 WHERE A.USER_SYSID IS NOT NULL;
 
+/* Exclude client accounts whose primary SIN belongs to an advisor. */
+CREATE TABLE #AdvisorClientExclusion
+(
+    IVR_SYSID int NOT NULL PRIMARY KEY
+);
+
+INSERT INTO #AdvisorClientExclusion (IVR_SYSID)
+SELECT DISTINCT
+    A.IVR_SYSID
+FROM [MPS].[dbo].[IVR] A
+INNER JOIN [MPS].[dbo].[REP] B
+    ON B.[SIN] = A.[IVR_PRIM_SIN]
+   AND B.[SIN] IS NOT NULL
+   AND B.[SIN] <> ''
+WHERE A.IVR_SYSID IS NOT NULL;
+
 /*
     Slim transaction population. The scalar risk/goal functions are intentionally
     not called here; they are evaluated only for final selected rows.
@@ -296,6 +312,8 @@ JOIN [MPS].[dbo].[S_PLN_CD] PC ON P.PLN_CD = PC.PLN_CD
 JOIN [MPS].[dbo].[IVD] E ON T.IVD_SYSID = E.IVD_SYSID
 JOIN [MPS].[dbo].[IVT] IT ON E.IVT_SYSID = IT.IVT_SYSID
 JOIN [MPS].[dbo].[REP] R ON I.REP_CD = R.REP_CD
+LEFT JOIN #AdvisorClientExclusion AX
+    ON AX.IVR_SYSID = T.IVR_SYSID
 OUTER APPLY
 (
     SELECT TOP (1)
@@ -309,6 +327,7 @@ LEFT JOIN [MPS].[dbo].[S_IVT_RISK] IR ON IR.IVT_RISK_CD = IT.IVT_RISK_CD
 WHERE T.TRADE_DT >= @DateFrom
   AND T.TRADE_DT < @DateTo
   AND T.TRX_NET IS NOT NULL
+  AND AX.IVR_SYSID IS NULL
   AND
   (
       T.TRX_CD IN
@@ -862,4 +881,5 @@ DROP TABLE #ApprovedPopulation;
 DROP TABLE #OrderPopulation;
 DROP TABLE #TransactionPopulation;
 DROP TABLE #ApproverScope;
+DROP TABLE #AdvisorClientExclusion;
 DROP TABLE #BranchScope;
