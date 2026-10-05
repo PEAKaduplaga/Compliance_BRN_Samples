@@ -4,7 +4,7 @@
 
 Convert the existing Univeris blotter query into a stored procedure that retrieves transactions for a specified branch (BRN) and supports the extraction and classification of compliance samples from the results.
 
-The procedure will use a rolling twelve-month period calculated from the execution date.
+The procedure will use the current calendar year, from January 1 through the execution date.
 
 ## 2. Existing source
 
@@ -22,7 +22,7 @@ The starting point is [`Univeris_Blotter_Finance_BRN.sql`](./Univeris_Blotter_Fi
 ### Date range
 
 - End date: the execution date, based on `GETDATE()`.
-- Start date: twelve months before the execution date.
+- Start date: January 1 of the execution year.
 - The date filtering should be applied to the appropriate transaction date field, expected to be `Trade_Date`; this will be confirmed while finalizing the query.
 - The procedure should define the date boundaries consistently so that transactions are neither unintentionally omitted nor duplicated at the boundaries.
 
@@ -31,7 +31,7 @@ The starting point is [`Univeris_Blotter_Finance_BRN.sql`](./Univeris_Blotter_Fi
 The procedure should return transactions that:
 
 1. Belong to the supplied BRN.
-2. Fall within the rolling twelve-month period.
+2. Fall within the current-year period from January 1 through the execution date.
 3. Meet the existing query's required transaction, client, plan, product, and status conditions.
 
 The existing output columns should be preserved unless the sampling design requires additional fields.
@@ -42,7 +42,7 @@ Sampling will be implemented as a series of steps. The detailed rules will be ad
 
 ### Planned steps
 
-1. Build the twelve-month BRN transaction population.
+1. Build the current-year BRN transaction population.
 2. Apply required exclusions or eligibility rules.
 3. Classify transactions into the defined sampling categories.
 4. Determine the sample size for each category.
@@ -65,9 +65,19 @@ Sampling will be implemented as a series of steps. The detailed rules will be ad
 
 The sampling rules are maintained as ordered rule definitions so that thresholds, transaction codes, risk codes, plan codes, and sample counts can be changed without rewriting the selection algorithm.
 
+### Advisor-owned client exclusion
+
+Before transaction candidates are classified or ranked, exclude client accounts where the client's primary SIN matches a nonblank advisor SIN:
+
+```sql
+IVR.IVR_PRIM_SIN = REP.SIN
+```
+
+The performance query materializes these client identifiers in `#AdvisorClientExclusion` and applies an anti-join while building `#TransactionPopulation`. The exclusion therefore applies to every transaction sample category, including supervision, direct, senior, leveraged, and new-account samples, without changing their selection or backfill rules.
+
 ### Supervision sample
 
-- Eligibility gate: the branch must have at least 10 qualifying transactions during the rolling twelve-month period.
+- Eligibility gate: the branch must have at least 10 qualifying transactions during the current-year period.
 - Current sample size: 3 transactions per representative; this must be configurable.
 - Rank `1` is the highest priority and rank `4` is the lowest priority.
 - Process candidates by ascending rank.
@@ -90,7 +100,7 @@ Current rule configuration from `Sheet1`:
 
 ### Direct/non-wired sample
 
-- Eligibility gate: the branch must have at least 5 qualifying direct transactions during the rolling twelve-month period.
+- Eligibility gate: the branch must have at least 5 qualifying direct transactions during the current-year period.
 - Current sample size: 1 transaction per representative; this must be configurable.
 - Require `Trade_type = 'D'`.
 - Process the configured transaction-code ranks in ascending order.
@@ -98,7 +108,7 @@ Current rule configuration from `Sheet1`:
 
 ### Senior-client sample
 
-- Eligibility gate: the branch must have at least 5 qualifying transactions during the rolling twelve-month period.
+- Eligibility gate: the branch must have at least 5 qualifying transactions during the current-year period.
 - Current sample size: 1 transaction per representative; this must be configurable.
 - Require `AGE >= 70`.
 - Prioritize transactions where `KYC_PLN.TIME_HORIZON_CD = 4`.
@@ -108,8 +118,8 @@ Current rule configuration from `Sheet1`:
 
 ### New-account sample
 
-- Identify new accounts using `MPS.dbo.PLN.SETUP_DT` within the rolling twelve-month period.
-- Eligibility gate: the branch must have at least 5 qualifying new accounts during the period.
+- Identify new accounts using `MPS.dbo.PLN.SETUP_DT` within the current-year period.
+- Eligibility gate: the branch must have at least 5 qualifying new accounts during the current-year period.
 - Current sample size: 1 new account per representative; this must be configurable.
 - Search the complete transaction set for each qualifying plan so the initial transaction is not excluded by the normal transaction-code filter.
 - Select the initial transaction by earliest `Trade_Date`, with `TRX_SYSID` as the tie-breaker.
@@ -120,7 +130,7 @@ Current rule configuration from `Sheet1`:
 
 The procedure should separate the following layers:
 
-1. `Population` — the existing transaction query filtered by BRN and rolling date range.
+1. `Population` — the existing transaction query filtered by BRN and current-year date range.
 2. `RuleConfig` — inline or temporary configuration rows containing sample type, rank, transaction-code set, risk-code set, plan-code set, amount threshold, age threshold, supervision flag, and required sample count. New-account candidates are added as a separate account-based population because their initial transaction must be found outside the normal filtered transaction population.
 3. `CandidateMatches` — evaluates each population transaction against the active rule rows and records the matching rule/rank.
 4. `RankedCandidates` — applies representative-level ordering: rank ascending, `Gross_Amount` descending, then stable transaction-key ordering for ties.
@@ -147,7 +157,7 @@ The final procedure may expose these as optional parameters with the documented 
 ## 5. Expected procedure behavior
 
 - Accept a BRN as an input parameter.
-- Calculate the rolling date range at execution time with `GETDATE()`.
+- Calculate the current-year date range at execution time with `GETDATE()`, using January 1 as the start date.
 - Query the Univeris data source using the existing blotter logic.
 - Produce the final selected sample set, not only the full population, once the sampling rules are complete.
 - Expose enough information to trace each selected sample back to the source transaction and its sampling category.
@@ -155,7 +165,7 @@ The final procedure may expose these as optional parameters with the documented 
 ## 6. Open decisions
 
 - Confirm the branch display columns to return from `MPS.dbo.BRN` (for example, branch code, name, and status).
-- Confirm whether the twelve-month filter uses `Trade_Date`, `Settlement_Date`, `Entry_Date`, or another date.
+- Confirm whether the transaction date filter should use `Trade_Date`, `Settlement_Date`, `Entry_Date`, or another date; the current performance query uses `TRX.TRADE_DT` for the transaction population.
 - Confirm whether the current query's date filters should be replaced or supplemented.
 - Confirm the SQL Server version and whether use of `TABLESAMPLE`, `NEWID()`, or another sampling approach is acceptable.
 - Confirm whether the procedure should return the full eligible population in addition to the selected sample.
@@ -165,6 +175,7 @@ The final procedure may expose these as optional parameters with the documented 
 | Date | Change |
 |---|---|
 | 2026-08-21 | Initial scope created from the existing Univeris blotter query. |
+| 2026-10-05 | Updated the sampling window to January 1 of the current year through execution time and documented the advisor-owned client exclusion. |
 
 ## 8. KYC sampling (CVC in French)
 
@@ -173,7 +184,7 @@ The final procedure may expose these as optional parameters with the documented 
 Add a KYC sample population for changes to the client's KYC information (`CVC` in the French version):
 
 - Select 1 CVC change per representative.
-- The branch must have at least 5 qualifying CVC changes during the twelve months preceding the review.
+- The branch must have at least 5 qualifying CVC changes during the current-year period preceding the review.
 - The sample is filtered by branch and representative.
 - The procedure should return selected samples only; the full population can be added later if required.
 - Because CVC changes do not have a transaction amount, the current selection order is most recent `ADT_DATE`, then highest `ADT_SYSID` for ties.
@@ -184,7 +195,7 @@ The KYC audit data is located in the Fabric Lake `PEAK_LAKE_BI` Delta tables. Th
 
 ### Initial population filters
 
-The KYC population should use the audit event date (`ADT_DATE`) for the rolling twelve-month period and retain only records with a populated `ADT_AFTER` value.
+The KYC population should use the audit event date (`ADT_DATE`) from January 1 of the current year through the execution date and retain only records with a populated `ADT_AFTER` value.
 
 The following audit fields must be excluded from the CVC-change population:
 
