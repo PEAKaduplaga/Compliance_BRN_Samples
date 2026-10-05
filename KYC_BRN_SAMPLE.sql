@@ -3,7 +3,9 @@
 /* Inputs and sampling controls: expose these as procedure parameters later if needed. */
 DECLARE @BRN varchar(10) = 'ON010';
 DECLARE @BRN_OVERRIDE varchar(1) = 'N'; -- Y = individual branch, N = main branch plus sub-branches
+/* One regular sample and one senior (70+) sample per representative. */
 DECLARE @SamplesPerRep int = 1;
+DECLARE @SeniorSamplesPerRep int = 1;
 DECLARE @MinBranchChanges int = 5;
 
 DECLARE @DateTo datetime = GETDATE();
@@ -128,6 +130,21 @@ IF NOT EXISTS
             ELSE B.[IVR_PRIM_LNAME] + ', ' + B.[IVR_PRIM_FNAME]
         END AS Client_Name,
         B.[IVR_SETUP_DT] AS Client_Setup_Date,
+        B.[IVR_PRIM_BDT] AS Client_Birth_Date,
+        CASE
+            WHEN B.[IVR_PRIM_BDT] IS NULL THEN NULL
+            ELSE DATEDIFF(YEAR, B.[IVR_PRIM_BDT], @DateTo)
+                 - CASE
+                     WHEN DATEADD
+                     (
+                         YEAR,
+                         DATEDIFF(YEAR, B.[IVR_PRIM_BDT], @DateTo),
+                         B.[IVR_PRIM_BDT]
+                     ) > @DateTo THEN 1
+                     ELSE 0
+                   END
+        END AS Client_Age,
+        P.[SETUP_DT] AS Plan_Setup_Date,
         A.[PLN_SYSID],
         A.[ACT_SYSID],
         A.[USER_SYSID],
@@ -149,6 +166,8 @@ IF NOT EXISTS
         ON A.IVR_SYSID = B.IVR_SYSID
     LEFT JOIN [PEAK_LAKE_BI].[UVS].[rep] C
         ON B.REP_SYSID = C.REP_SYSID
+    LEFT JOIN [PEAK_LAKE_BI].[UVS].[pln] P
+        ON P.[PLN_SYSID] = A.[PLN_SYSID]
     JOIN BranchScope BS
         ON BS.BRN_SYSID = B.BRN_SYSID
     WHERE A.ADT_DATE >= @DateFrom
@@ -184,7 +203,11 @@ IF NOT EXISTS
         F.Rep_Code,
         F.Rep_Name,
         F.BRN_SYSID,
-        MIN(F.ADT_DATE) AS Change_Date
+        MIN(F.ADT_DATE) AS Change_Date,
+        MAX(F.Client_Setup_Date) AS Client_Setup_Date,
+        MAX(F.Client_Birth_Date) AS Client_Birth_Date,
+        MAX(F.Client_Age) AS Client_Age,
+        MAX(F.Plan_Setup_Date) AS Plan_Setup_Date
     FROM FilteredAudit F
     GROUP BY
         F.ADT_SYSID,
@@ -195,37 +218,70 @@ IF NOT EXISTS
         F.Rep_Code,
         F.Rep_Name,
         F.BRN_SYSID
+), ClassifiedEvents AS
+(
+    SELECT
+        E.*,
+        CASE
+            WHEN E.Client_Setup_Date IS NOT NULL
+             AND CAST(E.Change_Date AS date) = CAST(E.Client_Setup_Date AS date)
+                THEN 'New Client'
+            WHEN E.Plan_Setup_Date IS NOT NULL
+             AND CAST(E.Change_Date AS date) = CAST(E.Plan_Setup_Date AS date)
+                THEN 'New Plan'
+            ELSE 'KYC Update'
+        END AS KYC_Change_Type
+    FROM ChangeEvents E
 ), BranchEligibility AS
 (
     SELECT E.BRN_SYSID
-    FROM ChangeEvents E
+    FROM ClassifiedEvents E
     GROUP BY E.BRN_SYSID
     HAVING COUNT(*) >= @MinBranchChanges
 ), RankedEvents AS
 (
     SELECT
-        E.ADT_SYSID,
-        E.IVR_SYSID,
-        E.PLN_SYSID,
-        E.ACT_SYSID,
-        E.REP_SYSID,
-        E.Rep_Code,
-        E.Rep_Name,
-        E.BRN_SYSID,
-        E.Change_Date,
+        E.*,
         ROW_NUMBER() OVER
         (
             PARTITION BY E.REP_SYSID
             ORDER BY E.Change_Date DESC, E.ADT_SYSID DESC
         ) AS Sample_Sequence
-    FROM ChangeEvents E
+    FROM ClassifiedEvents E
     JOIN BranchEligibility B
         ON E.BRN_SYSID = B.BRN_SYSID
+    WHERE E.Client_Age < 70
+       OR E.Client_Age IS NULL
+), SeniorRankedEvents AS
+(
+    SELECT
+        E.*,
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY E.REP_SYSID
+            ORDER BY E.Change_Date DESC, E.ADT_SYSID DESC
+        ) AS Sample_Sequence
+    FROM ClassifiedEvents E
+    JOIN BranchEligibility B
+        ON E.BRN_SYSID = B.BRN_SYSID
+    WHERE E.Client_Age >= 70
 ), SelectedEvents AS
 (
-    SELECT R.*
+    SELECT
+        R.*,
+        'KYC' AS Sample_Type
     FROM RankedEvents R
     WHERE R.Sample_Sequence <= @SamplesPerRep
+    UNION ALL
+    SELECT
+        SR.*,
+        CASE
+            WHEN SR.KYC_Change_Type = 'KYC Update'
+                THEN 'KYC Update Senior 70+'
+            ELSE 'New Plan/Client Senior 70+'
+        END AS Sample_Type
+    FROM SeniorRankedEvents SR
+    WHERE SR.Sample_Sequence <= @SeniorSamplesPerRep
 )
 SELECT
     BS.BRN_CD,
@@ -252,26 +308,18 @@ SELECT
     --F.REP_SYSID,
 
     S.Change_Date,
+    F.Client_Birth_Date AS IVR_PRIM_BDT,
+    F.Client_Age,
     F.Client_Setup_Date,
-    P.[SETUP_DT] AS Plan_Setup_Date,
-    CASE
-        WHEN F.Client_Setup_Date IS NOT NULL
-         AND CAST(F.ADT_DATE AS date) = CAST(F.Client_Setup_Date AS date)
-            THEN 'New Client'
-        WHEN P.[SETUP_DT] IS NOT NULL
-         AND CAST(F.ADT_DATE AS date) = CAST(P.[SETUP_DT] AS date)
-            THEN 'New Plan'
-        ELSE 'KYC Update'
-    END AS KYC_Change_Type,
-    'KYC' AS Sample_Type,
+    F.Plan_Setup_Date,
+    S.KYC_Change_Type,
+    S.Sample_Type,
     S.Sample_Sequence
 FROM SelectedEvents S
 JOIN FilteredAudit F
     ON F.ADT_SYSID = S.ADT_SYSID
 JOIN BranchScope BS
     ON BS.BRN_SYSID = F.BRN_SYSID
-LEFT JOIN [PEAK_LAKE_BI].[UVS].[pln] P
-    ON P.[PLN_SYSID] = F.[PLN_SYSID]
 ORDER BY
     F.Rep_Code,
     S.Sample_Sequence,
