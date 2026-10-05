@@ -7,7 +7,7 @@ DECLARE @SamplesPerRep int = 1;
 DECLARE @MinBranchChanges int = 5;
 
 DECLARE @DateTo datetime = GETDATE();
-DECLARE @DateFrom datetime = DATEADD(MONTH, -12, @DateTo);
+DECLARE @DateFrom datetime = DATEADD(YEAR, DATEDIFF(YEAR, 0, @DateTo), 0);
 DECLARE @UseIndividualBranch bit =
     CASE
         WHEN UPPER(LTRIM(RTRIM(@BRN_OVERRIDE))) = 'Y' THEN 1

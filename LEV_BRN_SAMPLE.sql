@@ -6,7 +6,7 @@ DECLARE @BAL_DT AS DATE = (SELECT MAX(BAL_DATE) FROM [MPS].[dbo].[PLN_BAL])
 DECLARE @BRN varchar(10) = 'QC033';
 
 DECLARE @DateTo datetime = GETDATE();
-DECLARE @DateFrom datetime = DATEADD(MONTH, -12, @DateTo);
+DECLARE @DateFrom datetime = DATEADD(YEAR, DATEDIFF(YEAR, 0, @DateTo), 0);
 DECLARE @BRN_SYSID int;
 DECLARE @BRN_NAME varchar(100);
 DECLARE @BRN_STATUS varchar(2);
